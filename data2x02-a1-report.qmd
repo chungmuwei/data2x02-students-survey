@@ -1,0 +1,481 @@
+---
+title: "DATA2X02 2022 Survey Analysis"
+date: "`r Sys.Date()`"
+bibliography: [ref/bibliography.bibtex]
+author: "510611635"
+format: 
+  html: 
+    self-contained: true # Creates a single HTML file as output
+    code-fold: true # Code folding; allows you to show/hide code chunks
+    code-tools: true # Includes a menu to download the code file
+table-of-contents: true # (Optional) Creates a table of contents!
+number-sections: true # (Optional) Puts numbers next to heading/subheadings
+---
+
+```{r setup}
+#| message: false
+library(tidyverse)
+# install.packages("remotes")
+# remotes::install_github("ropenscilabs/gendercoder")
+library(gendercoder)
+library(patchwork)
+library(ggpubr)
+x = readr::read_tsv("data/DATA2x02 survey (2022) - Form responses 1.tsv")
+```
+
+# Introduction
+
+The DATA2X02 survey was conducted by the unit coordinator Garth Tarr. The data was collected by an online form announced on the Ed discussion forum of DATA2X02 on 15th August and was due on 22nd August.
+
+## Data wrangling
+
+```{r}
+#| output: false
+old_names = colnames(x)
+new_names = c("timestamp","covid_positive","living_arrangements","height","uni_travel_method","uni_travel_listen","spain_budget","feel_overseas","feel_anxious","study_hrs","read_news","study_load","work","lab_zoom","social_media","gender","sleep_time","wake_time","random_number","steak_preference","dominant_hand","normal_advanced","exercise_hrs","employment_hrs","city","weekly_saving","hourly_plan","weeks_behind","assignment_on_time","used_r_before","team_role","data2x02_hrs","social_media_hrs","uni_year","sport","wam","shoe_size","decade_selection")
+# overwrite the old names with the new names:
+colnames(x) = new_names
+# combine old and new into a data frame:
+name_combo = bind_cols(New = new_names, Old = old_names)
+
+# height
+x = x %>% 
+  dplyr::mutate(
+    height_clean = readr::parse_number(height),
+    height_clean = case_when(
+      height_clean <= 2.5 ~ height_clean * 100,
+      height_clean <= 9 ~ NA_real_,
+      TRUE ~ height_clean
+    )
+  )
+
+# spain budget
+x = x %>% 
+  dplyr::mutate(
+    spain_budget_clean = readr::parse_number(spain_budget)
+  )
+
+# gender
+x = x %>% mutate(
+  gender_clean = gendercoder::recode_gender(gender)
+)
+
+# social media
+x = x %>% mutate(
+  social_media_clean = tolower(social_media),
+  social_media_clean = str_replace_all(social_media_clean, '[[:punct:]]',' '),
+  social_media_clean = stringr::word(social_media_clean),
+  social_media_clean = case_when(
+    stringr::str_starts(social_media_clean,"ins") ~ "instagram",
+    stringr::str_starts(social_media_clean,"ti") ~ "tiktok",
+    stringr::str_starts(social_media_clean,"mess") ~ "facebook",
+    stringr::str_starts(social_media_clean,"n") ~ "none",
+    is.na(social_media_clean) ~ "none",
+    TRUE ~ social_media_clean
+  ),
+  social_media_clean = tools::toTitleCase(social_media_clean),
+  social_media_clean = forcats::fct_lump_min(social_media_clean, min = 10)
+)
+
+# sport
+x = x %>% 
+  mutate(identifier = row_number()) %>% 
+  mutate(sport = replace_na(sport, "I Don't Play any Sport"))
+sport <- x %>%
+  dplyr::select(identifier, sport) %>% 
+  tidyr::separate_rows(sport,
+                       sep = ", ") %>% 
+  dplyr::mutate(sport = tools::toTitleCase(sport),
+                sport = factor(sport),
+                sport = forcats::fct_lump_min(sport, 2))
+sport_wide = sport %>% 
+  mutate(value = 1) %>% 
+  distinct() %>% 
+  pivot_wider(id_cols = identifier,
+              names_from = sport, 
+              values_from = value,
+              values_fill = 0)
+x = x %>%
+  left_join(sport_wide, by = "identifier") %>% 
+  janitor::clean_names()
+```
+
+The calculations in report were perform in R within the Quarto environment for reproducibility. Data wrangling was performed in base R and the tidyverse. Plots were produced with ggplot2 and patchwork packages. Tables were generated with knitr package.
+
+The data cleaning was based on [@tarr2022]. Name of the variables were cleaned and shortened manually. Heights in metre metres were converted to centimetre and those in inches were removed. Gender was cleaned using gendercoder packages. The cleaned gender consisted of 3 categories: men, women, and non-binary is store as a new column called `gender_clean` in the dataset. Missing values were not removed to preserve as much data as possible but will be handled in each case.
+
+## Discussions
+
+1.  Is this a random sample of DATA2X02 students?
+
+    A random sample of DATA2X02 students means that every DATA2X02 student has equal chance to be selected in that particular sample. In @tbl-survey-response, however, we can see that the response rate of the survey of the advanced and normal stream students is 57% and 21% respectively. This indicates that the advanced stream student has almost 3 times higher chance to be selected in this sample. Therefore, I would argue that it is not the random sample of DATA2X02 students.
+
+    If we split the DATA2X02 population into normal stream and advanced stream subpopulations, then I would say that they are random samples. Because the survey was post on the Ed discussion forum, which is the website which every student is required to checks regularly. Therefore, every student should had seen this survey and had an opportunity to answer it before it was due.
+
+    ```{r}
+    #| label: tbl-survey-response
+    #| tbl-cap: "Survey response rate"
+
+    # population: 780 normal, 70 advanced
+    x %>% 
+      filter(!is.na(normal_advanced)) %>%
+      group_by(normal_advanced) %>% 
+      summarise(responses = n()) %>%
+      mutate(
+        total = c(780, 70),
+        `response rate` = scales::percent(
+          responses / total,
+        )
+      ) %>% 
+      knitr::kable(format = "markdown", 
+                   digits = 3)
+    ```
+
+2.  What are the potential biases? Which variables are most likely to be subjected to this bias?
+
+    The potential biases for this survey are selection bias, non-response bias, and ambiguous question. Firstly, the advanced stream students have almost 3 times higher chance to be included in this sample, hence all variables are likely to be subjected to selection bias. Secondly, the question "How much time do you usually spend on DATA2X02 each week?" is likely to be subject to non-response bias. The reason is that the students who spend little time on DATA2X02 may not even noticed this survey, or just do not wanted to spend time answering the survey. Lastly, the question "What is your shoe size?" is ambiguous as it does not clarify what kinds of sizing system it was asking for.
+
+3.  Which questions needed improvement to generate useful data (e.g. in terms of the way the question was phrased or response validation)?
+
+    One of flaw of the survey questions is not clarifying the unit of the numerical value in the questions, which makes it hard to interpret the data because the answers can have different units. For instance, the question asking student height should specify the unit of length it was asking for and only allowed positive numerical values to be entered. The question about shoe size also need to specify the sizing system and the question regarding time spending on DATA2X02 should said it is in hours or minutes. The question of Spain travel budget need to specify which kind of currency should be entered.
+
+# Results
+
+```{r}
+#| label: COVID-19 positive ratio
+#| include: false
+data2x02.covid = x %>% 
+  group_by(covid_positive) %>%
+  summarise(n = n()) %>%
+  filter(covid_positive != "NA") %>%
+  pull(n)
+data2x02.covid
+Aus.pop = 25766605
+covid.pos = 10042846
+pos.p = covid.pos / Aus.pop
+aus.covid = c(1-pos.p, pos.p)
+chisq.test(data2x02.covid, p = aus.covid)
+```
+
+## Is the distribution of the frequency of feeling anxious independent of the handedness for the DATA2X02 students?
+
+I was curious about if the anxious level is independent of the handedness for the DATA2X02 student. Looking at the side by side bar plot in @fig-anxiety-level-by-handedness, we observed there are about 10% of right-handed people selected the highest level of anxiety (level 10), whereas none of the lefty and ambidexterity chose it. To formally test it, we perform a chi-square test for independence for anxiety level and handedness factors.
+
+```{r}
+#| label: handedness
+#| tbl-cap: "The number and the percentage of each handedness in DATA2X02"
+#| include: true
+
+# fatorise dominant hand column and reorder the levels
+x$dominant_hand = factor(x$dominant_hand, levels = c("Right", "Left", "Ambidextrous"))
+
+handedness = x %>% 
+  drop_na(dominant_hand) %>%
+  group_by(dominant_hand) %>%
+  summarise(count = n()) %>%
+  mutate(
+    percentage = count / sum(count)
+  ) 
+handedness %>% 
+  mutate(
+    percentage = scales::percent(
+      percentage,
+      accuracy = 0.01
+    )
+  ) %>%
+  knitr::kable(
+    format = "markdown",
+    digits = 3
+  )
+```
+
+```{r handiness chi-square goodness of fit test }
+#| include: false
+chisq.test(handedness$count[1:2], p = c(0.9, 0.1))
+```
+
+```{r out.width = "100%", fig.asp = 0.5}
+#| include: false
+anxiety_hand = x %>% select(c(feel_anxious, dominant_hand)) %>% drop_na()
+tab = anxiety_hand %>% group_by(dominant_hand) %>% 
+  summarise(n = n(), anxiety_scale = mean(feel_anxious))
+tab %>% knitr::kable(digits = 2)
+
+p1 = anxiety_hand %>% ggplot(aes(x = dominant_hand, y = feel_anxious, color = dominant_hand)) +
+  geom_boxplot() + geom_jitter()
+
+p2 = ggqqplot(anxiety_hand, x = "feel_anxious", facet.by = "dominant_hand")
+
+p1 + p2 + plot_annotation(tag_levels = 'A')
+```
+
+```{r}
+#| include: false
+anxiety = anxiety_hand[anxiety_hand$dominant_hand != "Ambidextrous",]$feel_anxious
+hand = anxiety_hand[anxiety_hand$dominant_hand != "Ambidextrous",]$dominant_hand
+permute_hand = hand
+t0_original = t.test(anxiety ~ hand, var.equal = T)$statistic
+p_original = t.test(anxiety ~ hand, var.equal = T)$p.value
+set.seed(2022)
+B = 10000
+t_null = vector("numeric", B)
+for (i in 1:B) {
+  permute_hand = sample(hand)
+  t_null[i] = t.test(anxiety ~ permute_hand, var.equal = T)$statistic
+}
+p_permute = mean(t_null >= t0_original)
+```
+
+```{r out.width = "100%"}
+#| label: fig-anxiety-level-by-handedness
+#| fig-cap: "The higher the number is, the higher the frequency of feeling anxious is."
+anxiety_hand %>% 
+  ggplot(aes(x = feel_anxious,
+             y = (..count..)/sum(..count..),
+            fill = dominant_hand)) +
+  geom_bar() +
+  facet_wrap(vars(dominant_hand)) + 
+  scale_x_continuous(breaks = seq(1, 10, by = 1)) +
+  labs(title = "Distrubution of the frequency of feeling anxious by handedness",
+       x = "anxiety level",
+       y = "proportion",
+       fill = "handedness")
+```
+
+1.  **Hypothesis**: Let $p_{1j}, p_{2j}, p_{3j}$ be the proportion of students which have anxiety level $j$ and are right-handed, left-handed, and ambidextrous respectively.$H_0: p_{ij} = p_{i∙}p_{∙j}$, $i=1,2,3$; $j=1,2,..., 10$, vs $H_1:$ Not all equalities hold. ($p$ is the proportion of cell)
+2.  **Assumptions**: Independent observation and $e_{ij}=y_{i∙}y_{∙j}/n \ge 5$ ($y$ is the expected cell count). We inspected the expected cell counts in @tbl-anxiety and found out many cells did not have enough counts. So we need to use Monte Carlo simulation approach to obtain the p-value.
+3.  **Test statistic**:$T=\sum_{i=1}^{r}\sum_{j=1}^{c}\frac{(y_{ij}-e_{ij})^2}{e_{ij}}$
+
+```{r}
+#| warning: false
+#| label: tbl-anxiety
+#| tbl-cap: "All the expected cells counts of lefty and ambidexterity are less than 5"
+
+y = vector(30, mode = "numeric")
+
+r = table(anxiety_hand[anxiety_hand$dominant_hand == "Right", ]$feel_anxious)
+l = table(anxiety_hand[anxiety_hand$dominant_hand == "Left", ]$feel_anxious)
+a = table(anxiety_hand[anxiety_hand$dominant_hand == "Ambidextrous", ]$feel_anxious)
+
+for (i in 1:10) {
+  y[as.integer(names(r[i]))] = r[i]
+}
+for (i in 1:10) {
+  y[as.integer(names(l[i]))+10] = l[i]
+}
+for (i in 1:10) {
+  y[as.integer(names(a[i]))+20] = a[i]
+}
+mat = matrix(y, nrow = 3, byrow = TRUE)
+colnames(mat) = c(1:10)
+rownames(mat) = c("Right", "Left", "Ambidextrous")
+
+# original
+original_test = chisq.test(mat, simulate.p.value = FALSE)
+original_test$expected %>% knitr::kable(digits = 2)
+# simulation
+set.seed(2022)
+simulate_test = chisq.test(mat, simulate.p.value = TRUE)
+```
+
+4.  **Original observed test statistic**: $t_0=\sum_{i=1}^{r}\sum_{j=1}^{c}\frac{(y_{ij}-y_{i∙}y_{∙j}/n)^2}{y_{i∙}y_{∙j}/n}=$ `r signif(original_test$statistic, 5)`
+5.  **Monte Carlo p-value**: $P(T_{simulate} \ge t_0)=$ `r signif(simulate_test$p.value, 3)` (base on 2000 simulations)
+6.  **Decision**: Since the Monte Carlo p-value is larger than 0.05, we do not reject the null hypothesis: the anxiety level is independent of the handedness.
+
+```{r}
+#| include: false
+
+#Is the steak temperature preference of DATA2x02 students fits a previous survey?
+
+steak = x %>%
+  drop_na(steak_preference) %>%
+  filter(
+    steak_preference %in% c("Rare", "Medium-rare", "Medium", "Medium-well done", "Well done")
+  ) %>%
+  group_by(steak_preference) %>%
+  summarise(count = n()) %>% mutate(
+    steak_preference = factor(
+      steak_preference, 
+      levels = c("Rare", "Medium-rare", "Medium", "Medium-well done", "Well done")),
+    percentage = count / sum(count))
+
+steak %>% 
+  mutate(
+    percentage = scales::percent(
+      percentage,
+      accuracy = 0.01
+    )
+  ) %>%
+  knitr::kable(
+    format = "markdown",
+    digits = 3
+  )
+```
+
+```{r steak chi-square}
+#| include: false
+steak_temp = steak$count
+p = c(0.025, 0.225, 0.375, 0.258, 0.117)
+n = sum(steak$count)
+e = n * p 
+# Rare expected cell counts are less than 5
+# merge Rare and Medium-rare
+steak_temp[2] = sum(steak_temp[1:2]) 
+steak_temp = steak_temp[2:length(steak_temp)]
+p[2] = sum(p[1:2])
+p = p[2:length(p)]
+chisq.test(steak_temp, p = p)
+```
+
+## Is the steak preference independent of the genders?
+
+Base on the bar plot in @fig-steak-boxplot, it seems like the proportion of men who enjoy medium-rare steak is much higher than women, whereas the proportion of men who like well-done steak is far less than women. Therefore, we do a chi-square test for independence of steak preference and gender factors at $5\%$ significance level to formally test if the the distribution of steak preference is dependent to gender.
+
+```{r}
+#| label: fig-steak-boxplot
+#| fig-cap: "The proportion of steak preference for men and women"
+steak_gender = x %>%
+  select(steak_preference, gender_clean) %>%
+  drop_na() %>% 
+  filter(gender_clean != "non-binary",
+         steak_preference %in% c("Rare", "Medium-rare", "Medium", "Medium-well done", "Well done")
+         ) %>% 
+  mutate(
+    steak_preference = factor(steak_preference,
+                              levels = c("Rare", "Medium-rare", "Medium", "Medium-well done", "Well done")
+                              )
+  )
+
+steak_gender %>%
+  ggplot(aes(x = steak_preference)) +
+  geom_bar(aes(y = (..count..)/sum(..count..),
+               fill = gender_clean), 
+           position = "dodge") +
+  labs(
+    title = "Steak preference by genders",
+    x = "steak preference",
+    y = "proportion",
+    fill = "gender"
+  ) 
+  #scale_fill_manual(values = c("#f8d733", "#7abf42"))
+```
+
+Since the number of non-binary gender in the dataset is insufficient to perform the chi-square test, we only select men and women from gender variable. Moreover, in @tbl-steak, the expected cell counts for rare steak is less than $5$, so we need combine the rare and medium-rare categories in order to meet the assumption for chi-square test.
+
+```{r}
+#| label: tbl-steak
+#| tbl-cap: "Expected cell counts of steak preference and gender"
+#| warning: false
+mat = table(steak_gender$gender_clean, steak_gender$steak_preference)
+chisq.test(mat)$expected %>%
+  knitr::kable(
+    format = "markdown",
+    digits = 2
+  )
+```
+
+```{r independence}
+#| output: false
+
+# combine rare and medium-rare categories to meet the assumption
+mat[,2] = mat[,1] + mat[,2] 
+mat = mat[,2:length(mat[1,])]
+colnames(mat)[1] = "Rare & Medium-rare"
+
+chisq.test(mat)
+
+# check expected cell counts >= 5
+chisq.test(mat)$expected >= 5
+```
+
+1.  **Hypothesis**: $H_0$: Steak preference is independent of gender, vs $H_1$: Steak preference is not independent of gender
+2.  **Assumptions**: Independent observation and each expected cell counts are greater than or equal to $5$, which we have confirmed to be `TRUE` after combining `Rare` and `Medium-rare` columns.
+3.  **Test statistic**: $T=\sum_{i=1}^{r}\sum_{j=1}^{c}\frac{(y_{ij}-e_{ij})^2}{e_{ij}}$
+4.  **Observed test statistic**: $t_0=\sum_{i=1}^{r}\sum_{j=1}^{c}\frac{(y_{ij}-y_{i∙}y_{∙j}/n)^2}{y_{i∙}y_{∙j}/n}=4.4722$
+5.  **p-value**: $P(\chi_3^2>4.4722)=0.2148>0.05$
+6.  **Decision**: Since the p-value is much larger than $0.05$, we do not reject the null hypothesis: steak preference is independent of gender.
+
+## Do the normal stream students spend more time on DATA2X02 each week than the advanced stream students at the 5% significance level?
+
+From the numerical summaries in @tbl-data2x02-hrs-numerical-summary-raw, we can see that there exist some extreme large outliers in both streams which greatly drag the means toward larger side and enlarge the variances. As a result, I decided to remove the observations which has unreasonably large value, more than 20 hours spending on DATA2X02 each week, in the dataset.
+
+After eliminating the outliers, the corresponding numerical summaries are shown in @tbl-data2x02-hrs-numerical-summary-clean. we can notice that now the normal stream students spend $7.5$ hours on DATA2X02 weekly, while advanced stream student only spend $5.9$ hours on DATA2X02 weekly and the standard deviation of DATA2902 is much smaller and similar to DATA2002. To test whether the normal stream students spend more time on DATA2X02 than the advanced stream student, we perform a one-sided two sample t-test of the two means.
+
+```{r}
+#| label: tbl-data2x02-hrs-numerical-summary-raw
+#| tbl-cap: "Numerical summaries of before removing outliers"
+
+study = x %>% select(data2x02_hrs, normal_advanced) %>% 
+  drop_na(data2x02_hrs, normal_advanced)
+
+study %>% group_by(normal_advanced) %>%
+  summarise(n = n(),
+            Mean = mean(data2x02_hrs) %>% signif(2),
+            Median = median(data2x02_hrs),
+            Max = max(data2x02_hrs),
+            SD = sd(data2x02_hrs) %>% signif(2)) %>%
+  knitr::kable()
+```
+
+```{r}
+#| label: tbl-data2x02-hrs-numerical-summary-clean
+#| tbl-cap: "Numerical summaries of after removing outliers"
+formatted = study %>% filter(data2x02_hrs <= 20) %>% 
+  group_by(normal_advanced) %>%
+  summarise(n = n(),
+            Mean = mean(data2x02_hrs) %>% signif(2),
+            Median = median(data2x02_hrs),
+            Max = max(data2x02_hrs),
+            SD = sd(data2x02_hrs) %>% signif(2)) %>%
+  knitr::kable()
+formatted
+```
+
+```{r}
+#| label: "fig-data2x02-hrs-normality"
+#| fig-cap: "Side by side boxplot and Q-Q plot showing the time spending on DATA2X02 follows the normal distribution approximately. **A**: 3 extreme large outliers (more than 20 hours) were removed"
+#| warning: true
+
+study = x %>% select(data2x02_hrs, normal_advanced) %>% 
+  drop_na(data2x02_hrs, normal_advanced) %>% filter(data2x02_hrs <= 20)
+
+p1 = study %>%
+  ggplot(aes(x = normal_advanced, y = data2x02_hrs, color = normal_advanced)) + 
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter() +
+  labs(title = "Side by side boxplot", x = "stream", y = "time(hr)", color = "stream")
+
+p2 = study %>% ggplot(aes(sample = data2x02_hrs, color = normal_advanced)) +
+  geom_qq() + 
+  geom_qq_line() + 
+  labs(title = "Q-Q plot", x = "theoretical", y = "sample", color = "stream")
+#p2 = ggqqplot(study, x = "data2x02_hrs", facet.by = "normal_advanced") 
+p1 + p2 + plot_layout(guides = 'collect') +
+  plot_annotation(tag_levels = 'A')
+```
+
+```{r}
+normal = study$data2x02_hrs[study$normal_advanced == "DATA2002"]
+advanced = study$data2x02_hrs[study$normal_advanced == "DATA2902"]
+t = t.test(normal, advanced, alternative = "greater", var.equal = T)
+```
+
+1.  **Hypothesis**: Let $\mu_N$ and $\mu_A$ be the population means for DATA2002 and DATA2902 students respectively. $H_0$: $\mu_N$ = $\mu_A$ $H_1$: $\mu_N > \mu_A$
+
+2.  **Assumptions**: The two populations are normally distributed (the points are all reasonably close to the line in the QQ plot in the right panel of @fig-data2x02-hrs-normality) and have roughly equal variances.
+
+3.  **Test statistic**: $t_0 = \frac{m_N - m_A}{s_p \sqrt{\frac{1}{n_N} + \frac{1}{n_A}}}$ where $n_N=155$, $n_A=37$ and $s_p = \sqrt{\frac{(n_N-1)s^2_N + (n_A-1)s^2_A}{n_N + n_A-2}}$
+
+4.  **Observed test statistic**: $t_0 =$ `r signif(t$statistic,3)`
+
+5.  **p-value**: $P(t_{`r t$parameter`}\leq`r signif(t$statistic,3)`)=0.009<0.05$
+
+6.  **Decision** Since the p-value is less than 0.05, we reject the null hypothesis. The mean time normal stream students spend on DATA2X02 is significantly more than the advanced stream student.
+
+# Conclusion
+
+1.  The distribution of the frequency of feeling anxious independent of the dominant hand of the DATA2X02 students.
+2.  The steak preference is independent of the genders.
+3.  The normal stream students spend more time than the advanced stream students on DATA2X02 each week.
+
+# Reference
